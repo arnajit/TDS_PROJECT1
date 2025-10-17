@@ -1,0 +1,3 @@
+https://arnajit03-tdsp1.hf.space/handle_task - for sending the task requests
+https://arnajit03-tdsp1.hf.space/test - for testing is the server ready
+https://arnajit03-tdsp1.hf.space/ - root also confirms the running of the server 
