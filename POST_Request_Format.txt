@@ -1,0 +1,24 @@
+Example Task Request Round1
+{
+  "email": "student@example.com",
+  "secret": "your_secret",
+  "task": "task_title",
+  "round": 1,
+  "nonce": "000",
+  "brief": "brif about the task",
+  "evaluation_url": "https://evaluation-server.com/notify",
+  "attachments": []
+}
+
+
+Example Task Request Round 2
+{
+  "email": "student@example.com",
+  "secret": "your_secret",
+  "task": "task_title",
+  "round": 2,
+  "nonce": "001",
+  "brief": "brif about the task",
+  "evaluation_url": "https://evaluation-server.com/notify",
+  "attachments": []
+}
