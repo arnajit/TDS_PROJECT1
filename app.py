@@ -35,6 +35,30 @@ if not AI_PIPE_TOKEN:
   
 app = FastAPI()
 
+
+def get_existing_file(repo_name: str, filename: str) -> Optional[str]:
+    """Fetch existing file content from GitHub repo"""
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json"
+    }
+    
+    try:
+        response = requests.get(
+            f"https://api.github.com/repos/{GITHUB_USERNAME}/{repo_name}/contents/{filename}",
+            headers=headers
+        )
+        
+        if response.status_code == 200:
+            # Decode the base64 content
+            content_b64 = response.json().get("content", "")
+            content = base64.b64decode(content_b64).decode('utf-8')
+            return content
+    except Exception as e:
+        print(f"Failed to fetch existing {filename}: {e}")
+    
+    return None
+
 def process_attachments(attachments: list) -> tuple:
     """Process attachments with improved error handling"""
     attachment_texts = []
@@ -217,6 +241,11 @@ def push_files_to_repo(repo_name: str, files: list[dict]):
         if response.status_code not in (200, 201):
             print(f"Failed to push {file_name}: {response.status_code}, {response.text}")
 
+
+
+
+    
+
 def get_latest_commit_sha(repo_name: str, branch: str = "main") -> str:
     """Get SHA of the latest commit"""
     headers = {
@@ -355,10 +384,11 @@ This project is licensed under the MIT License - see the LICENSE file for detail
         return main_content + new_round_section + license_section
 
 
-def write_code_with_llm(brief: str, attachments: list = None, model: str = "gpt-4-turbo") -> tuple:
+def write_code_with_llm(brief: str, attachments: list = None, model: str = "gpt-4-turbo", existing_code: str = None) -> tuple:
     """
     Generate web app code with intelligent image handling.
     Determines whether to analyze images or embed them based on brief keywords.
+    If existing_code is provided, updates it instead of creating new code.
     Returns (html_files, attachment_files)
     """
     # Process attachments
@@ -417,8 +447,31 @@ def write_code_with_llm(brief: str, attachments: list = None, model: str = "gpt-
         if other_files:
             full_brief += f"\n📄 Other files available: {', '.join(other_files)}"
 
-    # Build prompt
-    prompt = f"""Generate a complete, functional single-file web app (HTML with embedded CSS and JavaScript):
+    # Build prompt based on whether we're updating or creating
+    if existing_code:
+        prompt = f"""You are updating an existing web application. Here is the current code:
+
+<existing_code>
+{existing_code}
+</existing_code>
+
+NEW REQUIREMENTS:
+{full_brief}
+
+CRITICAL REQUIREMENTS:
+- UPDATE the existing code to incorporate the new requirements
+- PRESERVE all existing functionality unless explicitly asked to change it
+- ADD new features requested in the brief
+- Maintain the same structure and style
+- Reference image files by their EXACT filenames (they will be in the same directory)
+- NO placeholders or dummy content - everything must be functional
+- Images should use relative paths: <img src="filename.png">
+- Ensure responsive design and modern UI
+- Include proper error handling
+
+Return ONLY the COMPLETE UPDATED HTML code, no markdown formatting."""
+    else:
+        prompt = f"""Generate a complete, functional single-file web app (HTML with embedded CSS and JavaScript):
 
 {full_brief}
 
@@ -434,7 +487,7 @@ CRITICAL REQUIREMENTS:
 Return ONLY the HTML code, no markdown formatting."""
 
     messages = [
-        {"role": "system", "content": "You are an expert web developer. Generate clean, production-ready HTML with embedded CSS and JavaScript. Always reference files by their exact filenames."},
+        {"role": "system", "content": "You are an expert web developer. Generate clean, production-ready HTML with embedded CSS and JavaScript. Always reference files by their exact filenames. When updating code, preserve existing functionality and add new features seamlessly."},
         {"role": "user", "content": prompt}
     ]
 
@@ -465,7 +518,8 @@ Return ONLY the HTML code, no markdown formatting."""
 
     # Send request to LLM
     try:
-        print(f"Sending request to LLM (vision: {use_vision}, embed: {embed_images})...")
+        action = "Updating" if existing_code else "Generating"
+        print(f"{action} code with LLM (vision: {use_vision}, embed: {embed_images})...")
         resp = requests.post(
             f"{AI_PIPE_URL}/chat/completions",
             headers={
@@ -495,11 +549,16 @@ Return ONLY the HTML code, no markdown formatting."""
         if not html_code or len(html_code) < 100:
             raise ValueError("Generated HTML too short or empty")
 
-        print(f"Successfully generated HTML ({len(html_code)} chars)")
+        print(f"Successfully {action.lower()} HTML ({len(html_code)} chars)")
         return [{"name": "index.html", "content": html_code}], attachment_files
 
     except Exception as e:
         print(f"LLM request failed: {e}")
+        # If updating failed, return existing code
+        if existing_code:
+            print("Returning existing code due to LLM failure")
+            return [{"name": "index.html", "content": existing_code}], attachment_files
+        
         # Fallback HTML with image embedding if available
         fallback_html = """<!DOCTYPE html>
 <html lang="en">
@@ -529,6 +588,8 @@ Return ONLY the HTML code, no markdown formatting."""
 </body>
 </html>"""
         return [{"name": "index.html", "content": fallback_html}], attachment_files
+
+
 
 
 def notify_evaluation_api(evaluation_url: str, payload: dict, max_retries: int = 5):
@@ -629,15 +690,23 @@ def process_round_1(data: dict):
 
     
 def process_round_2(data: dict):
-    """Process round 2+ task (revisions) - DYNAMICALLY detects round number"""
+    """Process round 2+ task (revisions) - DYNAMICALLY detects round number and UPDATES existing code"""
     try:
         brief = data.get("brief", "")
         attachments = data.get("attachments", [])
         task_name = f"{data['task']}"
         round_num = data.get("round", 2)  # Get actual round number
         
-        # Generate updated code with LLM - intelligent image handling
-        html_files, attachment_files = write_code_with_llm(brief, attachments=attachments)
+        # FETCH EXISTING index.html
+        existing_html = get_existing_file(task_name, "index.html")
+        print(f"Fetched existing index.html: {'Yes' if existing_html else 'No'} ({len(existing_html) if existing_html else 0} chars)")
+        
+        # Generate updated code with LLM - passes existing code for updating
+        html_files, attachment_files = write_code_with_llm(
+            brief, 
+            attachments=attachments, 
+            existing_code=existing_html
+        )
         files = html_files + attachment_files
         
         # DYNAMICALLY fetch existing README and continue it
